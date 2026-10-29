@@ -1,0 +1,113 @@
+name: lightpanda
+base: core26
+version: '1.0.2'
+title: Lightpanda
+icon: snap/gui/lightpanda.png
+summary: Headless browser for web automation and AI agents
+description: |
+  Lightpanda is a headless browser with JavaScript execution, web scraping
+  and browser automation through the Chrome DevTools Protocol. Connect
+  existing Playwright and Puppeteer clients to its local server.
+
+  Fetch a page with lightpanda fetch https://example.com, or start the
+  automation server with lightpanda serve --host 127.0.0.1 --port 9222.
+license: AGPL-3.0-only
+grade: stable
+confinement: strict
+website: https://lightpanda.io
+source-code:
+  - https://github.com/lightpanda-io/browser
+  - https://github.com/sidalit/lightpanda-snap
+issues:
+  - https://github.com/lightpanda-io/browser/issues
+  - https://github.com/sidalit/lightpanda-snap/issues
+contact: https://github.com/sidalit/lightpanda-snap/issues
+
+platforms:
+  amd64:
+  arm64:
+
+package-repositories:
+  - type: apt
+    url: https://apt.llvm.org/resolute/
+    suites: [llvm-toolchain-resolute-23]
+    components: [main]
+    key-id: 6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+
+apps:
+  lightpanda:
+    command: bin/lightpanda
+    plugs:
+      - home
+      - network
+      - network-bind
+      - removable-media
+    environment:
+      XDG_DATA_HOME: $SNAP_USER_COMMON/.local/share
+      LIGHTPANDA_DISABLE_TELEMETRY: '1'
+
+parts:
+  zig:
+    plugin: dump
+    source:
+      - on amd64: https://ziglang.org/download/0.17.0/zig-x86_64-linux-0.17.0.tar.xz
+      - on arm64: https://ziglang.org/download/0.17.0/zig-aarch64-linux-0.17.0.tar.xz
+    source-checksum:
+      - on amd64: sha256/1cbe9df9f27e6b78d14ccbca43b6703a404ef79ef1c463de901d7f088d4e2026
+      - on arm64: sha256/9e8d11661d4ae3bd57702a3832781e23ad151dde5798e16a5ccd503f65234ff8
+    organize:
+      '*': build-deps/zig/
+    prime:
+      - -build-deps
+
+  lightpanda:
+    plugin: nil
+    source: https://github.com/lightpanda-io/browser.git
+    source-tag: $SNAPCRAFT_PROJECT_VERSION
+    after: [zig]
+    build-snaps: [rustup/latest/stable]
+    build-packages:
+      - build-essential
+      - ca-certificates
+      - clang
+      - curl
+      - git
+      - libglib2.0-dev
+      - lld
+      - pkg-config
+      - python3
+      - xz-utils
+      - on arm64:
+          - clang-23
+          - libclang-rt-23-dev
+          - lld-23
+    build-environment:
+      - PATH: $CRAFT_STAGE/build-deps/zig:$HOME/.cargo/bin:$PATH
+      - CARGO_BUILD_JOBS: $CRAFT_PARALLEL_BUILD_COUNT
+      - ZIG_GLOBAL_CACHE_DIR: $CRAFT_PART_BUILD/.zig-cache/global
+      - on amd64:
+          - ZIG_CPU: x86_64
+      - on arm64:
+          - ZIG_CPU: generic
+    override-build: |
+      rustup set profile minimal
+      rustup default stable
+      mkdir -p "$ZIG_GLOBAL_CACHE_DIR/tmp"
+      if [ "$CRAFT_ARCH_BUILD_FOR" = arm64 ]; then
+        # Match the compiler runtime paths expected by upstream's V8 build.
+        clang_lib=/usr/lib/llvm-23/lib/clang/23/lib
+        ln -sfn "$clang_lib/linux/libclang_rt.builtins-aarch64.a" "$clang_lib/linux/libclang_rt.builtins.a"
+        ln -sfn "$clang_lib/linux" "$clang_lib/aarch64-unknown-linux-gnu"
+      fi
+
+      zig build -j"$CRAFT_PARALLEL_BUILD_COUNT" -Doptimize=fast -Dcpu="$ZIG_CPU" \
+        -Dversion="$SNAPCRAFT_PROJECT_VERSION" snapshot_creator -- src/snapshot.bin
+      zig build -j"$CRAFT_PARALLEL_BUILD_COUNT" -Doptimize=fast -Dcpu="$ZIG_CPU" \
+        -Dversion="$SNAPCRAFT_PROJECT_VERSION" -Dsnapshot_path=../../snapshot.bin
+      install -Dm755 zig-out/bin/lightpanda "$CRAFT_PART_INSTALL/bin/lightpanda"
+      strip "$CRAFT_PART_INSTALL/bin/lightpanda"
+      install -Dm644 LICENSE "$CRAFT_PART_INSTALL/share/doc/lightpanda/LICENSE"
+      install -Dm644 src/rust/render/fonts/LICENSE \
+        "$CRAFT_PART_INSTALL/share/doc/lightpanda/FONTS-LICENSE"
+      install -Dm644 .lp-cache/v8-*/LICENSE \
+        "$CRAFT_PART_INSTALL/share/doc/lightpanda/V8-LICENSE"
