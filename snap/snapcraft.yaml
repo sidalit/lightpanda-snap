@@ -27,13 +27,6 @@ platforms:
   amd64:
   arm64:
 
-package-repositories:
-  - type: apt
-    url: https://apt.llvm.org/resolute/
-    suites: [llvm-toolchain-resolute-23]
-    components: [main]
-    key-id: 6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
-
 apps:
   lightpanda:
     command: bin/lightpanda
@@ -60,11 +53,25 @@ parts:
     prime:
       - -build-deps
 
+  v8:
+    plugin: dump
+    source:
+      - on amd64: https://github.com/lightpanda-io/zig-v8-fork/releases/download/v0.6.0/libc_v8_15.5.35.13_linux_x86_64.a
+      - on arm64: https://github.com/lightpanda-io/zig-v8-fork/releases/download/v0.6.0/libc_v8_15.5.35.13_linux_aarch64.a
+    source-type: file
+    source-checksum:
+      - on amd64: sha256/0d61c6f05990ebe3ab18ae6420a485b5475d7a76580307c49510dd81b5b111ec
+      - on arm64: sha256/8f97d60bb8bfe09585df82d19cbd41a8480efaefa0bc620fdf0f2b39d4605b82
+    organize:
+      '*.a': build-deps/v8/libc_v8.a
+    prime:
+      - -build-deps
+
   lightpanda:
     plugin: nil
     source: https://github.com/lightpanda-io/browser.git
     source-tag: $SNAPCRAFT_PROJECT_VERSION
-    after: [zig]
+    after: [zig, v8]
     build-snaps: [rustup/latest/stable]
     build-packages:
       - build-essential
@@ -77,10 +84,6 @@ parts:
       - pkg-config
       - python3
       - xz-utils
-      - on arm64:
-          - clang-23
-          - libclang-rt-23-dev
-          - lld-23
     build-environment:
       - PATH: $CRAFT_STAGE/build-deps/zig:$HOME/.cargo/bin:$PATH
       - CARGO_BUILD_JOBS: $CRAFT_PARALLEL_BUILD_COUNT
@@ -90,24 +93,28 @@ parts:
       - on arm64:
           - ZIG_CPU: generic
     override-build: |
+      # Zig 0.17 cannot parse numeric IPv6 scopes in resolved's upstream DNS list.
+      if [ "${CRAFT_MANAGED_MODE:-0}" = 1 ] &&
+         [ "$(readlink /etc/resolv.conf)" = /run/systemd/resolve/resolv.conf ] &&
+         [ -f /run/systemd/resolve/stub-resolv.conf ]; then
+        trap 'ln -sfn /run/systemd/resolve/resolv.conf /etc/resolv.conf' EXIT
+        ln -sfn /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+      fi
+
       rustup set profile minimal
       rustup default stable
       mkdir -p "$ZIG_GLOBAL_CACHE_DIR/tmp"
-      if [ "$CRAFT_ARCH_BUILD_FOR" = arm64 ]; then
-        # Match the compiler runtime paths expected by upstream's V8 build.
-        clang_lib=/usr/lib/llvm-23/lib/clang/23/lib
-        ln -sfn "$clang_lib/linux/libclang_rt.builtins-aarch64.a" "$clang_lib/linux/libclang_rt.builtins.a"
-        ln -sfn "$clang_lib/linux" "$clang_lib/aarch64-unknown-linux-gnu"
-      fi
 
       zig build -j"$CRAFT_PARALLEL_BUILD_COUNT" -Doptimize=fast -Dcpu="$ZIG_CPU" \
+        -Dprebuilt_v8_path="$CRAFT_STAGE/build-deps/v8/libc_v8.a" \
         -Dversion="$SNAPCRAFT_PROJECT_VERSION" snapshot_creator -- src/snapshot.bin
       zig build -j"$CRAFT_PARALLEL_BUILD_COUNT" -Doptimize=fast -Dcpu="$ZIG_CPU" \
+        -Dprebuilt_v8_path="$CRAFT_STAGE/build-deps/v8/libc_v8.a" \
         -Dversion="$SNAPCRAFT_PROJECT_VERSION" -Dsnapshot_path=../../snapshot.bin
       install -Dm755 zig-out/bin/lightpanda "$CRAFT_PART_INSTALL/bin/lightpanda"
       strip "$CRAFT_PART_INSTALL/bin/lightpanda"
       install -Dm644 LICENSE "$CRAFT_PART_INSTALL/share/doc/lightpanda/LICENSE"
       install -Dm644 src/rust/render/fonts/LICENSE \
         "$CRAFT_PART_INSTALL/share/doc/lightpanda/FONTS-LICENSE"
-      install -Dm644 .lp-cache/v8-*/LICENSE \
-        "$CRAFT_PART_INSTALL/share/doc/lightpanda/V8-LICENSE"
+      install -Dm644 zig-pkg/v8-*/LICENSE \
+        "$CRAFT_PART_INSTALL/share/doc/lightpanda/ZIG-V8-LICENSE"

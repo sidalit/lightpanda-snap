@@ -62,6 +62,8 @@ sudo snap connect lightpanda:removable-media   # optional: /media, /mnt
 
 ## Build
 
+Lightpanda is built from source using upstream's prebuilt V8 library.
+
 ```bash
 git clone https://github.com/sidalit/lightpanda-snap.git
 cd lightpanda-snap
