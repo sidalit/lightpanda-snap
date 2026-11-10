@@ -1,6 +1,6 @@
 name: lightpanda
 base: core26
-version: '1.0.2'
+version: '1.0.3'
 title: Lightpanda
 icon: snap/gui/lightpanda.png
 summary: Headless browser for web automation and AI agents
