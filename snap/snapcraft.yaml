@@ -53,25 +53,11 @@ parts:
     prime:
       - -build-deps
 
-  v8:
-    plugin: dump
-    source:
-      - on amd64: https://github.com/lightpanda-io/zig-v8-fork/releases/download/v0.6.0/libc_v8_15.5.35.13_linux_x86_64.a
-      - on arm64: https://github.com/lightpanda-io/zig-v8-fork/releases/download/v0.6.0/libc_v8_15.5.35.13_linux_aarch64.a
-    source-type: file
-    source-checksum:
-      - on amd64: sha256/0d61c6f05990ebe3ab18ae6420a485b5475d7a76580307c49510dd81b5b111ec
-      - on arm64: sha256/8f97d60bb8bfe09585df82d19cbd41a8480efaefa0bc620fdf0f2b39d4605b82
-    organize:
-      '*.a': build-deps/v8/libc_v8.a
-    prime:
-      - -build-deps
-
   lightpanda:
     plugin: nil
     source: https://github.com/lightpanda-io/browser.git
     source-tag: $SNAPCRAFT_PROJECT_VERSION
-    after: [zig, v8]
+    after: [zig]
     build-snaps: [rustup/latest/stable]
     build-packages:
       - build-essential
@@ -92,6 +78,27 @@ parts:
           - ZIG_CPU: x86_64
       - on arm64:
           - ZIG_CPU: generic
+    override-pull: |
+      craftctl default
+      # Use the prebuilt V8 that upstream's CI installs for this commit, checked
+      # against the digest GitHub publishes for the release asset.
+      action=.github/actions/install/action.yml
+      input_default() {
+        sed -n "/^  $1:\$/,/^  [^ ]/s/^    default: '\(.*\)'\$/\1/p" "$action"
+      }
+      zig_v8=$(input_default zig-v8)
+      v8=$(input_default v8)
+      if [[ ! "$zig_v8" =~ ^v[0-9.]+$ || ! "$v8" =~ ^[0-9.]+$ ]]; then
+        echo "Cannot read the V8 versions from $action" >&2
+        exit 1
+      fi
+      asset="libc_v8_${v8}_linux_$(uname -m).a"
+      digest=$(curl -fsSL "https://api.github.com/repos/lightpanda-io/zig-v8-fork/releases/tags/$zig_v8" |
+        python3 -c 'import json, sys; print(next(a["digest"] for a in json.load(sys.stdin)["assets"] if a["name"] == sys.argv[1]))' "$asset")
+      mkdir -p snap-v8
+      curl -fL -o snap-v8/libc_v8.a \
+        "https://github.com/lightpanda-io/zig-v8-fork/releases/download/$zig_v8/$asset"
+      echo "${digest#sha256:}  snap-v8/libc_v8.a" | sha256sum --check --strict
     override-build: |
       # Zig 0.17 cannot parse numeric IPv6 scopes in resolved's upstream DNS list.
       if [ "${CRAFT_MANAGED_MODE:-0}" = 1 ] &&
@@ -106,10 +113,10 @@ parts:
       mkdir -p "$ZIG_GLOBAL_CACHE_DIR/tmp"
 
       zig build -j"$CRAFT_PARALLEL_BUILD_COUNT" -Doptimize=fast -Dcpu="$ZIG_CPU" \
-        -Dprebuilt_v8_path="$CRAFT_STAGE/build-deps/v8/libc_v8.a" \
+        -Dprebuilt_v8_path="$CRAFT_PART_BUILD/snap-v8/libc_v8.a" \
         -Dversion="$SNAPCRAFT_PROJECT_VERSION" snapshot_creator -- src/snapshot.bin
       zig build -j"$CRAFT_PARALLEL_BUILD_COUNT" -Doptimize=fast -Dcpu="$ZIG_CPU" \
-        -Dprebuilt_v8_path="$CRAFT_STAGE/build-deps/v8/libc_v8.a" \
+        -Dprebuilt_v8_path="$CRAFT_PART_BUILD/snap-v8/libc_v8.a" \
         -Dversion="$SNAPCRAFT_PROJECT_VERSION" -Dsnapshot_path=../../snapshot.bin
       install -Dm755 zig-out/bin/lightpanda "$CRAFT_PART_INSTALL/bin/lightpanda"
       strip "$CRAFT_PART_INSTALL/bin/lightpanda"
