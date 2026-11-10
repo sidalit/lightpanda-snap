@@ -58,7 +58,8 @@ parts:
     source: https://github.com/lightpanda-io/browser.git
     source-tag: $SNAPCRAFT_PROJECT_VERSION
     after: [zig]
-    build-snaps: [rustup/latest/stable]
+    build-snaps:
+      - rustup/latest/stable
     build-packages:
       - build-essential
       - ca-certificates
